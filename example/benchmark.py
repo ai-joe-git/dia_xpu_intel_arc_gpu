@@ -15,7 +15,15 @@ torch._logging.set_logs(graph_breaks=True, recompiles=True)
 model_name = "nari-labs/Dia-1.6B"
 compute_dtype = "float16"
 
-model = Dia.from_pretrained(model_name, compute_dtype=compute_dtype)
+# Determine device for Intel XPU compatibility
+if torch.xpu.is_available():
+    device = "xpu"
+elif torch.cuda.is_available():
+    device = "cuda"
+else:
+    device = "cpu"
+
+model = Dia.from_pretrained(model_name, compute_dtype=compute_dtype, device=device)
 
 
 test_cases = [
@@ -26,7 +34,7 @@ test_cases = [
 ]
 
 
-# Wram up
+# Warm up
 for _ in range(2):
     text = choice(test_cases)
     output = model.generate(text, audio_prompt="./example_prompt.mp3", use_torch_compile=True, verbose=True)

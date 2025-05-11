@@ -1,7 +1,21 @@
 from dia.model import Dia
+import torch
 
+# Determine the best available device
+device = "xpu" if torch.xpu.is_available() else "cuda" if torch.cuda.is_available() else "cpu"
+print(f"Using device: {device}")
 
-model = Dia.from_pretrained("nari-labs/Dia-1.6B", compute_dtype="float16")
+# Load model with explicit device specification
+model = Dia.from_pretrained("nari-labs/Dia-1.6B", compute_dtype="float16", device=device)
+
+# Try to import Intel Extension for PyTorch for additional optimizations
+try:
+    import intel_extension_for_pytorch as ipex
+    has_ipex = True
+    print("Intel Extension for PyTorch is available and will be used for optimizations")
+except ImportError:
+    has_ipex = False
+    print("Intel Extension for PyTorch not found. Install it for better performance on Intel GPUs")
 
 # You should put the transcript of the voice you want to clone
 # We will use the audio created by running simple.py as an example.
@@ -19,8 +33,21 @@ clone_from_audios = [f"simple_{i}.mp3" for i in range(10)]
 
 texts = [clone_from_text + text_to_generate for _ in range(10)]
 
+# Configure generation based on device type
+compile_options = {}
+if device == "xpu" and has_ipex:
+    # Optimized settings for Intel GPUs
+    compile_options = {"backend": "inductor", "mode": "max-autotune"}
+    print("Using optimized compilation settings for Intel GPU")
+
 # It will only return the audio from the text_to_generate
-output = model.generate(texts, audio_prompt=clone_from_audios, use_torch_compile=True, verbose=True, max_tokens=2000)
+output = model.generate(
+    texts, 
+    audio_prompt=clone_from_audios, 
+    use_torch_compile=True, 
+    verbose=True, 
+    max_tokens=2000
+)
 
 for i, o in enumerate(output):
     model.save_audio(f"voice_clone_{i}.mp3", o)
