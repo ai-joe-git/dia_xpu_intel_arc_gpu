@@ -124,7 +124,7 @@ def run_inference(
 
         # Use torch.inference_mode() context manager for the generation call
         with torch.inference_mode():
-            output_audio_np = model.generate(
+            output_audio_np = model.generate_cpu_only(
                 text_input,
                 max_tokens=max_new_tokens,
                 cfg_scale=cfg_scale,

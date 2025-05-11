@@ -574,6 +574,73 @@ class Dia:
             # Return silent audio as fallback
             return torch.zeros(44100)
 
+    def generate_cpu_only(self, text, **kwargs):
+        """
+        Generate audio using CPU-only processing for maximum compatibility.
+        This is a special version that completely isolates the DAC processing.
+        """
+        # Step 1: Generate the codebook indices using the XPU model
+        batch_size = 1 if isinstance(text, str) else len(text)
+        
+        # Get the raw codebook indices
+        with torch.no_grad():
+            original_load_dac = self.load_dac
+            self.load_dac = False  # Temporarily disable DAC to get raw codes
+            codebook_indices = self.generate(text, **kwargs)
+            self.load_dac = original_load_dac  # Restore original setting
+        
+        # Step 2: Process the codebook indices with a fresh CPU-only DAC model
+        import dac
+        import numpy as np
+        
+        # Load a fresh DAC model on CPU
+        print("Loading fresh DAC model on CPU for audio decoding...")
+        dac_model_path = dac.utils.download()
+        cpu_dac = dac.DAC.load(dac_model_path).cpu().eval()
+        
+        # Process each batch item
+        results = []
+        for i in range(batch_size):
+            indices = codebook_indices[i] if batch_size > 1 else codebook_indices
+            if indices is None or len(indices) == 0:
+                results.append(np.zeros(44100))
+                continue
+                
+            # Convert to tensor and ensure proper shape and type
+            indices_tensor = torch.tensor(indices, dtype=torch.long, device="cpu")
+            if indices_tensor.dim() == 1:
+                indices_tensor = indices_tensor.unsqueeze(0)
+            
+            # Process through DAC
+            try:
+                indices_tensor = indices_tensor.transpose(0, 1).unsqueeze(0)
+                audio_values, _, _ = cpu_dac.quantizer.from_codes(indices_tensor)
+                audio_values = cpu_dac.decode(audio_values)
+                audio_np = audio_values.squeeze().cpu().numpy()
+                
+                # Normalize audio
+                max_val = max(abs(np.max(audio_np)), abs(np.min(audio_np)))
+                if max_val > 0:
+                    audio_np = audio_np / max_val * 0.95
+                    
+                results.append(audio_np)
+            except Exception as e:
+                print(f"Error in CPU decoding: {e}")
+                results.append(np.zeros(44100))
+        
+        # Return results
+        return results[0] if batch_size == 1 else results
+
+    def generate_and_save_cpu(self, text, output_path, **kwargs):
+        """Generate audio with CPU-only processing and save directly"""
+        output = self.generate_cpu_only(text, **kwargs)
+        
+        import soundfile as sf
+        if output is not None:
+            sf.write(output_path, output, DEFAULT_SAMPLE_RATE, 'PCM_16')
+            return True
+        return False
+
     def load_audio(self, audio_path: str) -> torch.Tensor:
         """Loads and preprocesses an audio file for use as a prompt.
 
