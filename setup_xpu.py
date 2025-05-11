@@ -2,6 +2,7 @@
 import subprocess
 import sys
 import os
+import platform
 
 def create_venv_and_install():
     venv_dir = "./venv"
@@ -14,56 +15,53 @@ def create_venv_and_install():
     # Get Python executable path for the virtual environment
     if os.name == 'nt':  # Windows
         python_executable = os.path.join(venv_dir, "Scripts", "python.exe")
+        pip_executable = os.path.join(venv_dir, "Scripts", "pip.exe")
     else:  # Unix/Linux/MacOS
         python_executable = os.path.join(venv_dir, "bin", "python")
+        pip_executable = os.path.join(venv_dir, "bin", "pip")
 
     print("Upgrading pip...")
-    # Use Python to run pip as a module (safer approach, especially on Windows)
     subprocess.check_call([python_executable, "-m", "pip", "install", "--upgrade", "pip"])
 
-    print("Installing PyTorch nightly with XPU support...")
+    # Install core dependencies first
+    print("Installing core dependencies...")
     subprocess.check_call([
-        python_executable, "-m", "pip", "install", "--pre", "torch", "torchaudio",
-        "--index-url", "https://download.pytorch.org/whl/nightly/"
+        python_executable, "-m", "pip", "install", 
+        "numpy", 
+        "pydantic", 
+        "safetensors", 
+        "soundfile", 
+        "gradio>=5.25.2", 
+        "huggingface-hub>=0.30.2",
+        "descript-audio-codec>=1.0.0"
     ])
 
-    print("Installing Intel Extension for PyTorch...")
-    try:
-        # Try to install the specific version from Intel's index
-        subprocess.check_call([
-            python_executable, "-m", "pip", "install", "intel-extension-for-pytorch==2.5.10+xpu",
-            "--extra-index-url", "https://pytorch-extension.intel.com/release-whl/stable/xpu/us/"
-        ])
-    except subprocess.CalledProcessError:
-        print("Warning: Failed to install specific version of Intel Extension for PyTorch.")
-        print("Trying alternative installation method...")
-        try:
-            # Try installing without version specification
-            subprocess.check_call([
-                python_executable, "-m", "pip", "install", "intel-extension-for-pytorch",
-                "--extra-index-url", "https://pytorch-extension.intel.com/release-whl/stable/xpu/us/"
-            ])
-        except subprocess.CalledProcessError:
-            print("Warning: Intel Extension for PyTorch installation failed.")
-            print("The model will still work but may not be optimized for Intel GPUs.")
-
-    print("Installing required dependencies...")
+    # Install PyTorch with XPU support - using a specific version known to work
+    print("Installing PyTorch with XPU support...")
     subprocess.check_call([
-        python_executable, "-m", "pip", "install", "gradio", "huggingface-hub", "soundfile", 
-        "numpy", "pydantic", "safetensors", "descript-audio-codec"
+        python_executable, "-m", "pip", "install", 
+        "torch==2.1.0", 
+        "torchaudio==2.1.0",
+        "--index-url", "https://download.pytorch.org/whl/cpu"
     ])
 
-    print("Installing project in development mode...")
+    # Now install the project itself
+    print("Installing the project...")
     try:
         subprocess.check_call([python_executable, "-m", "pip", "install", "-e", "."])
     except subprocess.CalledProcessError:
-        print("Warning: Failed to install project in development mode.")
-        print("Installing individual dependencies instead...")
+        print("Warning: Could not install the project in development mode.")
+        print("You may need to install additional dependencies manually.")
 
-    print("Setup complete. To activate the virtual environment, run:")
-    print(f"source {venv_dir}/bin/activate  # On Linux/macOS")
-    print(f"{venv_dir}\\Scripts\\activate.bat  # On Windows")
-
+    print("\nSetup complete!")
+    print("\nTo activate the virtual environment, run:")
+    if os.name == 'nt':
+        print(f"{venv_dir}\\Scripts\\activate.bat")
+    else:
+        print(f"source {venv_dir}/bin/activate")
+    
+    print("\nNote: Intel XPU support is provided through PyTorch's native implementation.")
+    print("You can now run the application with: python app.py --device xpu")
 
 if __name__ == '__main__':
     create_venv_and_install()
