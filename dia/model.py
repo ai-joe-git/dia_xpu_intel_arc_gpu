@@ -5,13 +5,6 @@ import numpy as np
 import torch
 import torchaudio
 
-# Try to import Intel Extension for PyTorch for better performance on Intel GPUs
-try:
-    import intel_extension_for_pytorch as ipex
-    HAS_IPEX = True
-except ImportError:
-    HAS_IPEX = False
-
 # Assuming these imports are relative to the package structure
 from .audio import apply_audio_delay, build_delay_indices, build_revert_indices, revert_audio_delay
 from .config import DiaConfig
@@ -24,12 +17,7 @@ SAMPLE_RATE_RATIO = 512
 
 
 def _get_default_device():
-    if torch.xpu.is_available():
-        return torch.device("xpu")
-    elif torch.cuda.is_available():
-        return torch.device("cuda")
-    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-        return torch.device("mps")
+    # Always return CPU for maximum compatibility
     return torch.device("cpu")
 
 
@@ -116,10 +104,12 @@ class Dia:
         """
         super().__init__()
         self.config = config
-        self.device = device if device is not None else _get_default_device()
+        # Force CPU device for maximum compatibility
+        self.device = torch.device("cpu")
         if isinstance(compute_dtype, str):
             compute_dtype = ComputeDtype(compute_dtype)
-        self.compute_dtype = compute_dtype.to_dtype()
+        # Use float32 on CPU for best compatibility
+        self.compute_dtype = torch.float32
         self.model: DiaModel = DiaModel(config, self.compute_dtype)
         self.dac_model = None
         self._compiled_step = None
@@ -127,21 +117,14 @@ class Dia:
 
         if not self.load_dac:
             print("Warning: DAC model will not be loaded. This is not recommended.")
-
-        # Enable TF32 for CUDA if available
-        if torch.cuda.is_available():
-            torch.backends.cuda.matmul.allow_tf32 = True
             
-        # Make sure model is in eval mode before IPEX optimization
+        # Make sure model is in eval mode
         self.model.eval()
         
-        # Move model to device
+        # Move model to CPU
         self.model.to(self.device)
         
-        # Apply Intel optimizations if available
-        if HAS_IPEX and self.device.type == "xpu":
-            self.model = ipex.optimize(self.model, dtype=self.compute_dtype)
-            print("Applied Intel Extension for PyTorch optimizations")
+        print("Model running on CPU for maximum compatibility")
 
     @classmethod
     def from_local(
@@ -217,7 +200,7 @@ class Dia:
 
         # Load model directly using DiaModel's from_pretrained which handles HF download
         try:
-            loaded_model = DiaModel.from_pretrained(model_name, compute_dtype=compute_dtype.to_dtype())
+            loaded_model = DiaModel.from_pretrained(model_name, compute_dtype=torch.float32)
         except Exception as e:
             raise RuntimeError(f"Error loading model from Hugging Face Hub ({model_name})") from e
 
@@ -244,13 +227,13 @@ class Dia:
 
         try:
             dac_model_path = dac.utils.download()
-            # Load DAC model and keep it on CPU for audio processing
+            # Load DAC model on CPU
             dac_model = dac.DAC.load(dac_model_path)
             dac_model.eval()  # Ensure DAC is in eval mode
             
-            # Store the DAC model on CPU for better compatibility
+            # Store the DAC model on CPU
             self.dac_model = dac_model.cpu()
-            print("DAC model loaded and kept on CPU for maximum compatibility")
+            print("DAC model loaded on CPU for maximum compatibility")
                 
         except Exception as e:
             raise RuntimeError("Failed to load DAC model") from e
@@ -522,7 +505,7 @@ class Dia:
         if self.load_dac:
             for i in range(batch_size):
                 audio = self._decode(codebook[i, : lengths_Bx[i], :])
-                audio_np = audio.cpu().numpy()
+                audio_np = audio.detach().cpu().numpy()
                 audios.append(audio_np)
         else:
             for i in range(batch_size):
@@ -560,12 +543,15 @@ class Dia:
             self.dac_model.cpu()
             
             # Generate audio with careful type handling
-            audio_values, _, _ = self.dac_model.quantizer.from_codes(audio_codes)
-            audio_values = self.dac_model.decode(audio_values)
-            result = audio_values.squeeze()
+            with torch.no_grad():
+                audio_values, _, _ = self.dac_model.quantizer.from_codes(audio_codes)
+                audio_values = self.dac_model.decode(audio_values)
+                result = audio_values.squeeze()
             
             # Apply normalization to ensure proper audio range
-            result = result / max(abs(result.min()), abs(result.max())) * 0.95
+            max_val = torch.max(torch.abs(result))
+            if max_val > 0:
+                result = result / max_val * 0.95
             
             return result
         except Exception as e:
@@ -573,73 +559,6 @@ class Dia:
             print(f"audio_codes shape: {audio_codes.shape}, dtype: {audio_codes.dtype}")
             # Return silent audio as fallback
             return torch.zeros(44100)
-
-    def generate_cpu_only(self, text, **kwargs):
-        """
-        Generate audio using CPU-only processing for maximum compatibility.
-        This is a special version that completely isolates the DAC processing.
-        """
-        # Step 1: Generate the codebook indices using the XPU model
-        batch_size = 1 if isinstance(text, str) else len(text)
-        
-        # Get the raw codebook indices
-        with torch.no_grad():
-            original_load_dac = self.load_dac
-            self.load_dac = False  # Temporarily disable DAC to get raw codes
-            codebook_indices = self.generate(text, **kwargs)
-            self.load_dac = original_load_dac  # Restore original setting
-        
-        # Step 2: Process the codebook indices with a fresh CPU-only DAC model
-        import dac
-        import numpy as np
-        
-        # Load a fresh DAC model on CPU
-        print("Loading fresh DAC model on CPU for audio decoding...")
-        dac_model_path = dac.utils.download()
-        cpu_dac = dac.DAC.load(dac_model_path).cpu().eval()
-        
-        # Process each batch item
-        results = []
-        for i in range(batch_size):
-            indices = codebook_indices[i] if batch_size > 1 else codebook_indices
-            if indices is None or len(indices) == 0:
-                results.append(np.zeros(44100))
-                continue
-                
-            # Convert to tensor and ensure proper shape and type
-            indices_tensor = torch.tensor(indices, dtype=torch.long, device="cpu")
-            if indices_tensor.dim() == 1:
-                indices_tensor = indices_tensor.unsqueeze(0)
-            
-            # Process through DAC
-            try:
-                indices_tensor = indices_tensor.transpose(0, 1).unsqueeze(0)
-                audio_values, _, _ = cpu_dac.quantizer.from_codes(indices_tensor)
-                audio_values = cpu_dac.decode(audio_values)
-                audio_np = audio_values.squeeze().cpu().numpy()
-                
-                # Normalize audio
-                max_val = max(abs(np.max(audio_np)), abs(np.min(audio_np)))
-                if max_val > 0:
-                    audio_np = audio_np / max_val * 0.95
-                    
-                results.append(audio_np)
-            except Exception as e:
-                print(f"Error in CPU decoding: {e}")
-                results.append(np.zeros(44100))
-        
-        # Return results
-        return results[0] if batch_size == 1 else results
-
-    def generate_and_save_cpu(self, text, output_path, **kwargs):
-        """Generate audio with CPU-only processing and save directly"""
-        output = self.generate_cpu_only(text, **kwargs)
-        
-        import soundfile as sf
-        if output is not None:
-            sf.write(output_path, output, DEFAULT_SAMPLE_RATE, 'PCM_16')
-            return True
-        return False
 
     def load_audio(self, audio_path: str) -> torch.Tensor:
         """Loads and preprocesses an audio file for use as a prompt.
@@ -665,7 +584,7 @@ class Dia:
         audio, sr = torchaudio.load(audio_path, channels_first=True)  # C, T
         if sr != DEFAULT_SAMPLE_RATE:
             audio = torchaudio.functional.resample(audio, sr, DEFAULT_SAMPLE_RATE)
-        return self._encode(audio)
+        return self._encode(audio.cpu())
 
     def save_audio(self, path: str, audio: np.ndarray):
         """Saves the generated audio waveform to a file.
@@ -690,26 +609,6 @@ class Dia:
             normalized_audio = audio
 
         sf.write(path, normalized_audio, DEFAULT_SAMPLE_RATE)
-
-    def generate_and_save_direct(self, text, output_path, **kwargs):
-        """Generate audio and save directly with careful processing"""
-        output = self.generate(text, **kwargs)
-        
-        import soundfile as sf
-        if output is not None:
-            # Ensure output is in the correct range for 16-bit audio
-            if np.size(output) > 0:
-                max_val = max(abs(np.max(output)), abs(np.min(output)))
-                if max_val > 0:
-                    normalized_audio = output / max_val * 0.95
-                else:
-                    normalized_audio = output
-            else:
-                normalized_audio = output
-                
-            sf.write(output_path, normalized_audio, DEFAULT_SAMPLE_RATE, 'PCM_16')
-            return True
-        return False
 
     @torch.inference_mode()
     def generate(
@@ -757,6 +656,9 @@ class Dia:
             each corresponding to a prompt in the input list. Returns None for a
             sequence if no audio was generated for it.
         """
+        # Force torch.compile to False on CPU
+        use_torch_compile = False
+        
         batch_size = len(text) if isinstance(text, list) else 1
         audio_eos_value = self.config.data.audio_eos_value
         audio_pad_value = self.config.data.audio_pad_value
@@ -774,16 +676,6 @@ class Dia:
 
         if verbose:
             total_start_time = time.time()
-
-        if use_torch_compile and not hasattr(self, "_compiled"):
-            # Compilation can take about a minute.
-            try:
-                self._prepare_generation = torch.compile(self._prepare_generation, dynamic=True, fullgraph=True)
-                self._decoder_step = torch.compile(self._decoder_step, fullgraph=True, mode="max-autotune")
-                self._compiled = True
-            except Exception as e:
-                print(f"Warning: Failed to compile functions: {e}")
-                print("Continuing without compilation...")
 
         if isinstance(audio_prompt, list):
             audio_prompt = [self.load_audio(p) if isinstance(p, str) else p for p in audio_prompt]
@@ -814,8 +706,6 @@ class Dia:
 
         if verbose:
             print("generate: starting generation loop")
-            if use_torch_compile:
-                print("generate: using use_torch_compile=True, the first step may be slow")
             start_time = time.time()
 
         # --- Generation Loop ---
@@ -824,8 +714,6 @@ class Dia:
                 break
 
             current_step_idx = dec_step + 1
-            # Remove CUDA-specific graph marking for XPU compatibility
-            # torch.compiler.cudagraph_mark_step_begin()
             dec_state.prepare_step(dec_step)
             tokens_Bx1xC = dec_output.get_tokens_at(dec_step).repeat_interleave(2, dim=0)  # Repeat for CFG
 

@@ -9,22 +9,13 @@ from dia.model import Dia
 
 # Parse command-line arguments
 parser = argparse.ArgumentParser(description="Dia TTS Demo")
-parser.add_argument("--device", type=str, default=None, help="Device to use (cpu, cuda, xpu)")
+parser.add_argument("--device", type=str, default="cpu", help="Device to use (cpu, cuda, xpu)")
 parser.add_argument("--model", type=str, default="nari-labs/Dia-1.6B", help="Model name or path")
-parser.add_argument("--dtype", type=str, default="float16", help="Compute dtype (float32, float16, bfloat16)")
+parser.add_argument("--dtype", type=str, default="float32", help="Compute dtype (float32, float16, bfloat16)")
 args = parser.parse_args()
 
-# Set device based on arguments or auto-detect
-if args.device:
-    device = torch.device(args.device)
-else:
-    if torch.xpu.is_available():
-        device = torch.device("xpu")
-    elif torch.cuda.is_available():
-        device = torch.device("cuda")
-    else:
-        device = torch.device("cpu")
-
+# Force CPU usage regardless of what's available
+device = torch.device("cpu")
 print(f"Using device: {device}")
 
 # Load model
@@ -48,9 +39,9 @@ def run_inference(text, audio_prompt=None, temperature=1.0, top_p=0.9, cfg_scale
         if audio_prompt is not None:
             generation_params["audio_prompt"] = audio_prompt
         
-        # Use CPU-only generation to avoid audio distortion issues
+        # Use standard generation on CPU
         start_time = time.time()
-        output_audio_np = model.generate_cpu_only(text, **generation_params)
+        output_audio_np = model.generate(text, **generation_params)
         generation_time = time.time() - start_time
         print(f"Generation finished in {generation_time:.2f} seconds.")
         
@@ -85,7 +76,7 @@ def run_inference(text, audio_prompt=None, temperature=1.0, top_p=0.9, cfg_scale
 
 # Create the Gradio interface - original style
 with gr.Blocks() as demo:
-    gr.Markdown("# Dia - Text to Speech Model")
+    gr.Markdown("# Dia - Text to Speech Model (CPU Mode)")
     gr.Markdown("Enter text with speaker tags like [S1] and [S2]. You can also include non-verbal sounds like (laughs) or (coughs).")
     
     with gr.Row():
