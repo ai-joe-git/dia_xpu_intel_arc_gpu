@@ -35,28 +35,47 @@ def create_venv_and_install():
         python_executable, "-m", "pip", "install", "numpy<2.0.0"
     ])
 
-    # Install PyTorch 2.4.0 which has RMSNorm support
-    print("Installing PyTorch 2.4.0 with XPU support...")
+    # Install PyTorch 2.6.0 with XPU support (available version)
+    print("Installing PyTorch 2.6.0 with XPU support...")
     subprocess.check_call([
         python_executable, "-m", "pip", "install", 
-        "torch==2.4.0", 
-        "torchaudio==2.4.0",
+        "torch==2.6.0+xpu", 
+        "torchaudio==2.6.0+xpu",
         "--index-url", "https://download.pytorch.org/whl/xpu"
     ])
+
+    # Install Intel Extension for PyTorch
+    print("Installing Intel Extension for PyTorch...")
+    try:
+        subprocess.check_call([
+            python_executable, "-m", "pip", "install",
+            "intel-extension-for-pytorch==2.5.10+xpu",
+            "--extra-index-url", "https://pytorch-extension.intel.com/release-whl/stable/xpu/us/"
+        ])
+    except subprocess.CalledProcessError:
+        print("Warning: Intel Extension installation failed, continuing without it...")
 
     # Install core dependencies
     print("Installing core dependencies...")
     subprocess.check_call([
         python_executable, "-m", "pip", "install", 
-        "pydantic<3.0.0",  # Ensure compatibility
+        "pydantic<3.0.0",
         "safetensors",
         "soundfile",
         "gradio>=5.25.2",
         "huggingface-hub>=0.30.2",
-        "descript-audio-codec>=1.0.0",
-        "triton==3.2.0 ; sys_platform == 'linux'",
-        "triton-windows==3.2.0.post18 ; sys_platform == 'win32'"
+        "descript-audio-codec>=1.0.0"
     ])
+
+    # Install triton based on platform
+    if sys.platform == 'linux':
+        subprocess.check_call([
+            python_executable, "-m", "pip", "install", "triton==3.2.0"
+        ])
+    elif sys.platform == 'win32':
+        subprocess.check_call([
+            python_executable, "-m", "pip", "install", "triton-windows==3.2.0.post18"
+        ])
 
     # Now install the project itself
     print("Installing the project...")
@@ -64,9 +83,7 @@ def create_venv_and_install():
         subprocess.check_call([python_executable, "-m", "pip", "install", "-e", "."])
     except subprocess.CalledProcessError:
         print("Warning: Could not install the project in development mode.")
-        print("Installing remaining dependencies manually...")
-        
-        # Fallback: install remaining dependencies directly
+        # Install remaining dependencies directly
         subprocess.check_call([
             python_executable, "-m", "pip", "install",
             "transformers",
