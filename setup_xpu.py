@@ -35,25 +35,22 @@ def create_venv_and_install():
         python_executable, "-m", "pip", "install", "numpy<2.0.0"
     ])
 
-    # Install PyTorch 2.6.0 with XPU support (available version)
-    print("Installing PyTorch 2.6.0 with XPU support...")
+    # Install PyTorch 2.5.1 with XPU support (compatible with Intel Extension 2.5.10+xpu)
+    print("Installing PyTorch 2.5.1 with XPU support...")
     subprocess.check_call([
         python_executable, "-m", "pip", "install", 
-        "torch==2.6.0+xpu", 
-        "torchaudio==2.6.0+xpu",
+        "torch==2.5.1+xpu", 
+        "torchaudio==2.5.1+xpu",
         "--index-url", "https://download.pytorch.org/whl/xpu"
     ])
 
-    # Install Intel Extension for PyTorch
+    # Install Intel Extension for PyTorch 2.5.10+xpu
     print("Installing Intel Extension for PyTorch...")
-    try:
-        subprocess.check_call([
-            python_executable, "-m", "pip", "install",
-            "intel-extension-for-pytorch==2.5.10+xpu",
-            "--extra-index-url", "https://pytorch-extension.intel.com/release-whl/stable/xpu/us/"
-        ])
-    except subprocess.CalledProcessError:
-        print("Warning: Intel Extension installation failed, continuing without it...")
+    subprocess.check_call([
+        python_executable, "-m", "pip", "install",
+        "intel-extension-for-pytorch==2.5.10+xpu",
+        "--extra-index-url", "https://pytorch-extension.intel.com/release-whl/stable/xpu/us/"
+    ])
 
     # Install core dependencies
     print("Installing core dependencies...")
@@ -83,7 +80,7 @@ def create_venv_and_install():
         subprocess.check_call([python_executable, "-m", "pip", "install", "-e", "."])
     except subprocess.CalledProcessError:
         print("Warning: Could not install the project in development mode.")
-        # Install remaining dependencies directly
+        print("Installing remaining dependencies directly...")
         subprocess.check_call([
             python_executable, "-m", "pip", "install",
             "transformers",
