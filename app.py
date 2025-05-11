@@ -14,7 +14,7 @@ from dia.model import Dia
 
 # --- Global Setup ---
 parser = argparse.ArgumentParser(description="Gradio interface for Nari TTS")
-parser.add_argument("--device", type=str, default=None, help="Force device (e.g., 'cuda', 'mps', 'cpu')")
+parser.add_argument("--device", type=str, default=None, help="Force device (e.g., 'xpu', 'cuda', 'cpu')")
 parser.add_argument("--share", action="store_true", help="Enable Gradio sharing")
 
 args = parser.parse_args()
@@ -23,6 +23,8 @@ args = parser.parse_args()
 # Determine device
 if args.device:
     device = torch.device(args.device)
+elif torch.xpu.is_available():
+    device = torch.device("xpu")
 elif torch.cuda.is_available():
     device = torch.device("cuda")
 # Simplified MPS check for broader compatibility
@@ -33,7 +35,6 @@ else:
     device = torch.device("cpu")
 
 print(f"Using device: {device}")
-
 # Load Nari model and config
 print("Loading Nari model...")
 try:
@@ -66,7 +67,6 @@ def run_inference(
     temp_txt_file_path = None
     temp_audio_prompt_path = None
     output_audio = (44100, np.zeros(1, dtype=np.float32))
-
     try:
         prompt_path_for_generate = None
         if audio_prompt_input is not None:

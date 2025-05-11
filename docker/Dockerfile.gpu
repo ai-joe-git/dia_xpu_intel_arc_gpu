@@ -1,20 +1,23 @@
-# Dockerfile.gpu - GPU deployment for DIA
+# Dockerfile.gpu - Intel XPU deployment for DIA
 # --------------------------------------------------
-# Build: docker build . -f docker/Dockerfile.gpu -t dia-gpu
-# Run:   docker run --rm --gpus all -p 7860:7860 dia-gpu
-# Requires NVIDIA Container Toolkit on host.
+# Build: docker build . -f docker/Dockerfile.gpu -t dia-xpu
+# Run:   docker run --rm --device=/dev/dri -p 7860:7860 dia-xpu
+# Requires Intel GPU drivers on host.
 
-FROM pytorch/pytorch:2.1.2-cuda12.1-cudnn8-runtime
+FROM ubuntu:22.04
 
 # Set non-interactive frontend
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install venv, and system dependencies
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
+    python3-pip \
     python3-venv \
     libsndfile1 \
     ffmpeg \
     curl \
+    git \
+    wget \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user and set up directories
@@ -32,18 +35,20 @@ COPY --chown=appuser:appuser . .
 RUN python3 -m venv /app/venv
 ENV PATH="/app/venv/bin:$PATH"
 
-# Install all project dependencies
-RUN pip install --upgrade pip && pip install --no-cache-dir .
+# Install PyTorch with Intel XPU support
+RUN pip install --upgrade pip && \
+    pip install --pre torch --index-url https://download.pytorch.org/whl/nightly/ && \
+    pip install intel-extension-for-pytorch && \
+    pip install --no-cache-dir .
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1 \
     PYTHONPATH=/app \
-    USE_GPU=true \
-    LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/cuda-12.1/lib64:${LD_LIBRARY_PATH}
+    USE_XPU=true
 
 # Expose Gradio default port
 ENV GRADIO_SERVER_NAME="0.0.0.0"
 EXPOSE 7860
 
 # Entrypoint
-CMD ["python3", "app.py"]
+CMD ["python3", "app.py", "--device", "xpu"]

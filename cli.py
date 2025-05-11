@@ -14,7 +14,10 @@ def set_seed(seed: int):
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
-    if torch.cuda.is_available():
+    if torch.xpu.is_available():
+        torch.xpu.manual_seed(seed)
+        torch.xpu.manual_seed_all(seed)
+    elif torch.cuda.is_available():
         torch.cuda.manual_seed(seed)
         torch.cuda.manual_seed_all(seed)
     # Ensure deterministic behavior for cuDNN (if used)
@@ -67,11 +70,14 @@ def main():
 
     infra_group = parser.add_argument_group("Infrastructure")
     infra_group.add_argument("--seed", type=int, default=None, help="Random seed for reproducibility.")
+    
+    # Updated device default to include XPU
+    default_device = "xpu" if torch.xpu.is_available() else "cuda" if torch.cuda.is_available() else "cpu"
     infra_group.add_argument(
         "--device",
         type=str,
-        default="cuda" if torch.cuda.is_available() else "cpu",
-        help="Device to run inference on (e.g., 'cuda', 'cpu', default: auto).",
+        default=default_device,
+        help="Device to run inference on (e.g., 'xpu', 'cuda', 'cpu', default: auto).",
     )
 
     args = parser.parse_args()

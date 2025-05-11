@@ -5,6 +5,13 @@ import numpy as np
 import torch
 import torchaudio
 
+# Try to import Intel Extension for PyTorch for better performance on Intel GPUs
+try:
+    import intel_extension_for_pytorch as ipex
+    HAS_IPEX = True
+except ImportError:
+    HAS_IPEX = False
+
 # Assuming these imports are relative to the package structure
 from .audio import apply_audio_delay, build_delay_indices, build_revert_indices, revert_audio_delay
 from .config import DiaConfig
@@ -17,7 +24,9 @@ SAMPLE_RATE_RATIO = 512
 
 
 def _get_default_device():
-    if torch.cuda.is_available():
+    if torch.xpu.is_available():
+        return torch.device("xpu")
+    elif torch.cuda.is_available():
         return torch.device("cuda")
     elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
         return torch.device("mps")
@@ -35,7 +44,6 @@ def _sample_next_token(
         return torch.argmax(logits_BCxV, dim=-1)
 
     logits_BCxV = logits_BCxV / temperature
-
     if audio_eos_value is not None and audio_eos_value >= 0:
         top_logit_indices_BC = torch.argmax(logits_BCxV, dim=-1)
         eos_not_highest_mask_BC = top_logit_indices_BC != audio_eos_value
@@ -120,8 +128,14 @@ class Dia:
         if not self.load_dac:
             print("Warning: DAC model will not be loaded. This is not recommended.")
 
+        # Enable TF32 for CUDA if available
         if torch.cuda.is_available():
             torch.backends.cuda.matmul.allow_tf32 = True
+            
+        # Apply Intel optimizations if available
+        if HAS_IPEX and self.device.type == "xpu":
+            self.model = ipex.optimize(self.model, dtype=self.compute_dtype)
+            print("Applied Intel Extension for PyTorch optimizations")
 
     @classmethod
     def from_local(
@@ -228,6 +242,11 @@ class Dia:
             dac_model_path = dac.utils.download()
             dac_model = dac.DAC.load(dac_model_path).to(self.device)
             dac_model.eval()  # Ensure DAC is in eval mode
+            
+            # Apply Intel optimizations to DAC model if available
+            if HAS_IPEX and self.device.type == "xpu":
+                dac_model = ipex.optimize(dac_model, dtype=self.compute_dtype)
+                
         except Exception as e:
             raise RuntimeError("Failed to load DAC model") from e
         self.dac_model = dac_model
@@ -358,7 +377,6 @@ class Dia:
                   containing the prefilled audio tokens.
         """
         batch_size = text.shape[0]
-
         enc_input_uncond = torch.zeros_like(text)
         enc_input_cond = text
         stacked_inputs = torch.stack([enc_input_uncond, enc_input_cond], dim=1)
@@ -405,7 +423,7 @@ class Dia:
 
         Args:
             tokens_Bx1xC: The input tokens for the current step, shape [2*B, 1, C].
-                         Repeated for CFG (unconditional and conditional).
+                          Repeated for CFG (unconditional and conditional).
             dec_state: The current state of the decoder (KV caches, etc.).
             cfg_scale: The scale factor for classifier-free guidance.
             temperature: The temperature for sampling.
@@ -424,7 +442,6 @@ class Dia:
 
         logits_last_2BxCxV = logits_Bx1xCxV[:, -1]
         logits_last_Bx2xCxV = logits_last_2BxCxV.view(B, 2, *logits_last_2BxCxV.shape[1:])
-
         uncond_logits_BxCxV = logits_last_Bx2xCxV[:, 0, :, :]  # Shape [B, C, V]
         cond_logits_BxCxV = logits_last_Bx2xCxV[:, 1, :, :]  # Shape [B, C, V]
         logits_BxCxV = cond_logits_BxCxV + cfg_scale * (cond_logits_BxCxV - uncond_logits_BxCxV)
@@ -448,7 +465,6 @@ class Dia:
             top_k=top_k,
             audio_eos_value=audio_eos_value,
         )
-
         pred_BxC = pred_BC.view(B, self.config.data.channels)
         return pred_BxC
 
@@ -682,7 +698,8 @@ class Dia:
                 break
 
             current_step_idx = dec_step + 1
-            torch.compiler.cudagraph_mark_step_begin()
+            # Remove CUDA-specific graph marking for XPU compatibility
+            # torch.compiler.cudagraph_mark_step_begin()
             dec_state.prepare_step(dec_step)
             tokens_Bx1xC = dec_output.get_tokens_at(dec_step).repeat_interleave(2, dim=0)  # Repeat for CFG
 
