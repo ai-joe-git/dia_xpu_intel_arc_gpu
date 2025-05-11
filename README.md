@@ -61,9 +61,17 @@ python app.py --device xpu
 pause
 ```
 
-## Manual Installation
+## System Requirements
 
-If you prefer to install manually:
+- Intel Arc GPU or Intel Core Ultra processor with integrated graphics
+- Intel GPU drivers (version 31.0.101.4575 or later recommended)
+  - [Download latest Intel GPU drivers](https://www.intel.com/content/www/us/en/download-center/home.html)
+- Python 3.10 or newer
+- Windows 10/11 or Linux with Intel GPU support
+
+## Installation
+
+### Windows Installation
 
 ```bash
 # Clone this repository
@@ -74,19 +82,56 @@ cd dia_xpu_intel_arc_gpu
 python setup_xpu.py
 
 # Activate the virtual environment
-source venv/bin/activate  # On Linux/macOS
-venv\Scripts\activate.bat  # On Windows
+venv\Scripts\activate.bat
 
 # Run the Gradio UI
 python app.py --device xpu
 ```
 
-## System Requirements
+### Linux Installation
 
-- Intel Arc GPU or Intel Core Ultra processor with integrated graphics
-- Intel GPU drivers (version 30.0.100.9955 or later recommended)
-- Python 3.10 or newer
-- Windows 10/11 or Linux with Intel GPU support
+Linux users need to install additional packages for Intel GPU support:
+
+```bash
+# Install required packages for Intel GPU support
+sudo apt-get update
+sudo apt-get install -y ocl-icd-libopencl1 intel-opencl-icd intel-level-zero-gpu level-zero
+
+# Clone this repository
+git clone https://github.com/ai-joe-git/dia_xpu_intel_arc_gpu.git
+cd dia_xpu_intel_arc_gpu
+
+# Run the setup script
+python setup_xpu.py
+
+# Activate the virtual environment
+source venv/bin/activate
+
+# Run the Gradio UI
+python app.py --device xpu
+```
+
+### Docker Installation
+
+For users who prefer containerized environments:
+
+```bash
+# Build the Docker image
+docker build . -f docker/Dockerfile.gpu -t dia-xpu
+
+# Run the container with Intel GPU access
+docker run --rm --device=/dev/dri -p 7860:7860 dia-xpu
+```
+
+## Environment Variables
+
+You can configure the following environment variables for optimal performance:
+
+- `ONEAPI_DEVICE_SELECTOR`: Controls which Intel GPU to use in multi-GPU setups
+  - Example: `export ONEAPI_DEVICE_SELECTOR=level_zero:0` (selects first GPU)
+- `IPEX_XPU_ONEDNN_LAYOUT`: Set to `1` to enable optimized memory layout
+- `PYTORCH_CUDA_ALLOC_CONF`: Configure memory allocation behavior
+  - Example: `export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:128`
 
 ## Using Existing Model Files
 
@@ -149,15 +194,53 @@ model.save_audio("cloned_voice.mp3", output)
 
 ## Troubleshooting
 
+### Intel GPU Detection Issues
+
 If you encounter issues with Intel GPU detection:
 
 1. Ensure you have the latest Intel GPU drivers installed
-2. For Linux users, verify OpenCL runtime packages are installed:
+   - Windows: Use the [Intel Driver & Support Assistant](https://www.intel.com/content/www/us/en/support/detect.html)
+   - Linux: Follow Intel's [installation guide](https://dgpu-docs.intel.com/installation-guides/index.html)
+
+2. Verify your GPU is properly recognized:
+   - Windows: Check Device Manager under "Display adapters"
+   - Linux: Run `lspci | grep VGA` to list graphics devices
+
+3. Make sure PyTorch can see your Intel GPU:
+   ```python
+   import torch
+   print(f"XPU available: {torch.xpu.is_available()}")
+   print(f"XPU device count: {torch.xpu.device_count()}")
    ```
-   sudo apt-get install -y ocl-icd-libopencl1 intel-opencl-icd intel-level-zero-gpu level-zero
+
+### GPU Hang Issues
+
+If you experience GPU hangs or crashes:
+
+1. Update to the latest GPU drivers
+2. Try reducing batch size or model precision (use float16 instead of bfloat16)
+3. On Linux, you can try suspending and resuming GPU processing:
+   ```python
+   # If a GPU operation hangs, in another terminal:
+   sudo sysfs-power-management suspend
+   sudo sysfs-power-management resume
    ```
-3. For Windows users, check Device Manager to verify your Intel GPU is properly recognized
-4. Make sure you're using the PyTorch nightly build with XPU support
+
+4. Set environment variable to enable timeout detection:
+   ```
+   export SYCL_PI_LEVEL_ZERO_DEVICE_SCOPE_EVENTS=1
+   ```
+
+### Compatibility Issues
+
+1. Ensure you're using compatible versions:
+   - PyTorch nightly build (2.5.0.dev or newer)
+   - Intel Extension for PyTorch (2.5.0+xpu or newer)
+   - Latest Intel GPU drivers
+
+2. For Windows Native vs WSL2:
+   - Windows Native is recommended for simplicity
+   - If using WSL2, ensure GPU passthrough is properly configured
 
 ## License
 
