@@ -5,6 +5,13 @@ from huggingface_hub import PyTorchModelHubMixin
 from torch import Tensor
 from torch.nn import RMSNorm
 
+# Try to import Intel Extension for PyTorch for better performance on Intel GPUs
+try:
+    import intel_extension_for_pytorch as ipex
+    HAS_IPEX = True
+except ImportError:
+    HAS_IPEX = False
+
 from .config import DiaConfig
 from .state import DecoderInferenceState, EncoderInferenceState, KVCache
 
@@ -84,7 +91,6 @@ class MlpBlock(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass."""
         fused_x = self.wi_fused(x)
-
         gate = fused_x[..., 0, :]
         up = fused_x[..., 1, :]
 
@@ -123,10 +129,16 @@ class RotaryEmbedding(nn.Module):
         sinusoid_inp = position / self.timescale
         sin = torch.sin(sinusoid_inp)
         cos = torch.cos(sinusoid_inp)
+        
+        # Ensure consistent device placement
+        inputs_dtype = inputs.dtype
+        inputs_device = inputs.device
+        
         first_half, second_half = torch.chunk(inputs.to(torch.float32), 2, dim=-1)
         first_part = first_half * cos - second_half * sin
         second_part = second_half * cos + first_half * sin
-        return torch.cat((first_part.to(self.compute_dtype), second_part.to(self.compute_dtype)), dim=-1)
+        
+        return torch.cat((first_part.to(inputs_dtype), second_part.to(inputs_dtype)), dim=-1)
 
 
 class Attention(nn.Module):
@@ -260,7 +272,6 @@ class Attention(nn.Module):
 
         attn_output = attn_output.transpose(1, 2).contiguous()  # (B, T, N, H)
         output = self.o_proj(attn_output)
-
         return output.to(original_dtype)
 
 
@@ -631,3 +642,10 @@ class DiaModel(
         self.config = config
         self.encoder = Encoder(config, compute_dtype)
         self.decoder = Decoder(config, compute_dtype)
+        
+        # Apply IPEX optimization if on XPU
+        if HAS_IPEX and hasattr(torch, 'xpu') and torch.xpu.is_available():
+            device = next(self.parameters()).device
+            if device.type == 'xpu':
+                self = ipex.optimize(self, dtype=compute_dtype)
+                print("Applied Intel Extension for PyTorch optimizations to DiaModel")

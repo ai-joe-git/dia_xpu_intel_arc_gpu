@@ -2,6 +2,13 @@ from dataclasses import dataclass
 
 import torch
 
+# Try to import Intel Extension for PyTorch for better performance on Intel GPUs
+try:
+    import intel_extension_for_pytorch as ipex
+    HAS_IPEX = True
+except ImportError:
+    HAS_IPEX = False
+
 from .config import DiaConfig
 
 
@@ -50,7 +57,7 @@ class EncoderInferenceState:
 
     @classmethod
     def new(cls, config: DiaConfig, cond_src: torch.Tensor) -> "EncoderInferenceState":
-        """Creates EtorchrInferenceParams from DiaConfig and a device."""
+        """Creates EncoderInferenceParams from DiaConfig and a device."""
         device = cond_src.device
 
         positions = torch.arange(config.data.text_length, dtype=torch.float32, device=device).unsqueeze(0)
@@ -78,11 +85,20 @@ class KVCache(torch.nn.Module):
         k: torch.Tensor | None = None,
         v: torch.Tensor | None = None,
     ):
-        k = torch.zeros((2 * batch_size, num_heads, max_len, head_dim), dtype=dtype, device=device) if k is None else k
-        v = torch.zeros((2 * batch_size, num_heads, max_len, head_dim), dtype=dtype, device=device) if v is None else v
         super().__init__()
+        
+        # Initialize tensors with zeros if not provided
+        if k is None:
+            k = torch.zeros((2 * batch_size, num_heads, max_len, head_dim), dtype=dtype, device=device)
+        if v is None:
+            v = torch.zeros((2 * batch_size, num_heads, max_len, head_dim), dtype=dtype, device=device)
+            
+        # Apply IPEX optimization for XPU if available
+        if HAS_IPEX and device.type == 'xpu':
+            k = ipex.optimize_tensor(k, dtype=dtype)
+            v = ipex.optimize_tensor(v, dtype=dtype)
 
-        self.current_idx = torch.tensor(0)
+        self.current_idx = torch.tensor(0, device=device)
         self.register_buffer("k", k)
         self.register_buffer("v", v)
 
@@ -144,6 +160,12 @@ class DecoderInferenceState:
         dec_positions = torch.full((2 * batch_size, 1), fill_value=0, dtype=torch.int32, device=device)
         causal_mask = torch.tril(torch.ones(max_audio_len, max_audio_len, dtype=torch.bool, device=device))
 
+        # Optimize tensors for XPU if available
+        if HAS_IPEX and device.type == 'xpu':
+            dec_positions = ipex.optimize_tensor(dec_positions, dtype=torch.int32)
+            causal_mask = ipex.optimize_tensor(causal_mask, dtype=torch.bool)
+            enc_out = ipex.optimize_tensor(enc_out, dtype=compute_dtype)
+
         self_attn_cache = [
             KVCache(
                 batch_size,
@@ -171,6 +193,10 @@ class DecoderInferenceState:
         if step_to is None:
             step_to = step_from + 1
         self.dec_positions = torch.arange(step_from, step_to, dtype=torch.int32, device=self.device).unsqueeze(0)
+        
+        # Optimize tensor for XPU if available
+        if HAS_IPEX and self.device.type == 'xpu':
+            self.dec_positions = ipex.optimize_tensor(self.dec_positions, dtype=torch.int32)
 
 
 @dataclass
@@ -181,13 +207,19 @@ class DecoderOutput:
     @classmethod
     def new(cls, batch_size: int, config: DiaConfig, device: torch.device) -> "DecoderOutput":
         max_audio_len = config.data.audio_length
+        tokens = torch.full(
+            (batch_size, max_audio_len, config.data.channels),
+            fill_value=-1,
+            dtype=torch.int,
+            device=device,
+        )
+        
+        # Optimize tensor for XPU if available
+        if HAS_IPEX and device.type == 'xpu' and hasattr(ipex, 'optimize_tensor'):
+            tokens = ipex.optimize_tensor(tokens, dtype=torch.int)
+            
         return cls(
-            generated_tokens=torch.full(
-                (batch_size, max_audio_len, config.data.channels),
-                fill_value=-1,
-                dtype=torch.int,
-                device=device,
-            ),
+            generated_tokens=tokens,
             prefill_steps=[],
         )
 
