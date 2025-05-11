@@ -132,6 +132,12 @@ class Dia:
         if torch.cuda.is_available():
             torch.backends.cuda.matmul.allow_tf32 = True
             
+        # Make sure model is in eval mode before IPEX optimization
+        self.model.eval()
+        
+        # Move model to device
+        self.model.to(self.device)
+        
         # Apply Intel optimizations if available
         if HAS_IPEX and self.device.type == "xpu":
             self.model = ipex.optimize(self.model, dtype=self.compute_dtype)
@@ -176,8 +182,6 @@ class Dia:
         except Exception as e:
             raise RuntimeError(f"Error loading checkpoint from {checkpoint_path}") from e
 
-        dia.model.to(dia.device)
-        dia.model.eval()
         if load_dac:
             dia._load_dac_model()
         return dia
@@ -222,7 +226,7 @@ class Dia:
 
         dia.model = loaded_model  # Assign the already loaded model
         dia.model.to(dia.device)
-        dia.model.eval()
+        # Model is already set to eval mode in __init__
         if load_dac:
             dia._load_dac_model()
         return dia
@@ -245,7 +249,12 @@ class Dia:
             
             # Apply Intel optimizations to DAC model if available
             if HAS_IPEX and self.device.type == "xpu":
-                dac_model = ipex.optimize(dac_model, dtype=self.compute_dtype)
+                # Convert all parameters to the same dtype before optimization
+                # This ensures consistent dtype throughout the model
+                for param in dac_model.parameters():
+                    param.data = param.data.to(torch.float32)
+                dac_model = ipex.optimize(dac_model, dtype=torch.float32)
+                print("Applied Intel Extension for PyTorch optimizations to DAC model")
                 
         except Exception as e:
             raise RuntimeError("Failed to load DAC model") from e
@@ -543,11 +552,24 @@ class Dia:
         """
         Decodes the given frames into an output audio waveform
         """
-        audio_codes = audio_codes.unsqueeze(0).transpose(1, 2)
-        audio_values, _, _ = self.dac_model.quantizer.from_codes(audio_codes)
-        audio_values = self.dac_model.decode(audio_values)
-        audio_values: torch.Tensor
-        return audio_values.squeeze()
+        # Convert to float32 to match DAC model's expected dtype
+        audio_codes = audio_codes.unsqueeze(0).transpose(1, 2).to(torch.float32)
+        try:
+            audio_values, _, _ = self.dac_model.quantizer.from_codes(audio_codes)
+            audio_values = self.dac_model.decode(audio_values)
+            audio_values: torch.Tensor
+            return audio_values.squeeze()
+        except RuntimeError as e:
+            # If there's a dtype mismatch error, try with a different dtype
+            if "Input type" in str(e) and "bias type" in str(e):
+                print("Warning: Dtype mismatch in DAC model. Trying with explicit float32 conversion.")
+                # Force all tensors to float32
+                self.dac_model.to(torch.float32)
+                audio_values, _, _ = self.dac_model.quantizer.from_codes(audio_codes)
+                audio_values = self.dac_model.decode(audio_values)
+                return audio_values.squeeze()
+            else:
+                raise e
 
     def load_audio(self, audio_path: str) -> torch.Tensor:
         """Loads and preprocesses an audio file for use as a prompt.
@@ -655,9 +677,13 @@ class Dia:
 
         if use_torch_compile and not hasattr(self, "_compiled"):
             # Compilation can take about a minute.
-            self._prepare_generation = torch.compile(self._prepare_generation, dynamic=True, fullgraph=True)
-            self._decoder_step = torch.compile(self._decoder_step, fullgraph=True, mode="max-autotune")
-            self._compiled = True
+            try:
+                self._prepare_generation = torch.compile(self._prepare_generation, dynamic=True, fullgraph=True)
+                self._decoder_step = torch.compile(self._decoder_step, fullgraph=True, mode="max-autotune")
+                self._compiled = True
+            except Exception as e:
+                print(f"Warning: Failed to compile functions: {e}")
+                print("Continuing without compilation...")
 
         if isinstance(audio_prompt, list):
             audio_prompt = [self.load_audio(p) if isinstance(p, str) else p for p in audio_prompt]
