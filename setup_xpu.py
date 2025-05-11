@@ -11,33 +11,29 @@ def create_venv_and_install():
     else:
         print(f"Virtual environment already exists in {venv_dir}.")
 
-    # Activate venv and install dependencies
-    pip_executable = os.path.join(venv_dir, "bin", "pip")
-    if not os.path.exists(pip_executable):
-        pip_executable = os.path.join(venv_dir, "Scripts", "pip.exe")  # Windows fallback
+    # Get Python executable path for the virtual environment
+    if os.name == 'nt':  # Windows
+        python_executable = os.path.join(venv_dir, "Scripts", "python.exe")
+    else:  # Unix/Linux/MacOS
+        python_executable = os.path.join(venv_dir, "bin", "python")
 
     print("Upgrading pip...")
-    subprocess.check_call([pip_executable, "install", "--upgrade", "pip"])
+    # Use Python to run pip as a module (safer approach, especially on Windows)
+    subprocess.check_call([python_executable, "-m", "pip", "install", "--upgrade", "pip"])
 
     print("Installing PyTorch nightly with XPU support and Intel extension...")
     subprocess.check_call([
-        pip_executable,
-        "install",
-        "--pre",
-        "torch",
-        "torchaudio",
-        "--index-url",
-        "https://download.pytorch.org/whl/nightly/"
+        python_executable, "-m", "pip", "install", "--pre", "torch", "torchaudio",
+        "--index-url", "https://download.pytorch.org/whl/nightly/"
     ])
 
+    print("Installing Intel Extension for PyTorch...")
     subprocess.check_call([
-        pip_executable,
-        "install",
-        "intel-extension-for-pytorch"
+        python_executable, "-m", "pip", "install", "intel-extension-for-pytorch"
     ])
 
     print("Installing other project dependencies...")
-    subprocess.check_call([pip_executable, "install", "-e", "."])
+    subprocess.check_call([python_executable, "-m", "pip", "install", "-e", "."])
 
     print("Setup complete. To activate the virtual environment, run:")
     print(f"source {venv_dir}/bin/activate  # On Linux/macOS")
