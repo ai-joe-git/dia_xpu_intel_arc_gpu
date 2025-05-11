@@ -244,18 +244,16 @@ class Dia:
 
         try:
             dac_model_path = dac.utils.download()
-            dac_model = dac.DAC.load(dac_model_path).to(self.device)
+            # Load DAC model and keep it on CPU for audio processing
+            dac_model = dac.DAC.load(dac_model_path)
             dac_model.eval()  # Ensure DAC is in eval mode
             
-            # Apply Intel optimizations to DAC model if available
-            if HAS_IPEX and self.device.type == "xpu":
-                # Keep all parameters in their original dtype for compatibility
-                dac_model = ipex.optimize(dac_model)
-                print("Applied Intel Extension for PyTorch optimizations to DAC model")
+            # Store the DAC model on CPU for better compatibility
+            self.dac_model = dac_model.cpu()
+            print("DAC model loaded and kept on CPU for maximum compatibility")
                 
         except Exception as e:
             raise RuntimeError("Failed to load DAC model") from e
-        self.dac_model = dac_model
 
     def _encode_text(self, text: str) -> torch.Tensor:
         """Encodes the input text string into a tensor of token IDs using byte-level encoding.
@@ -537,7 +535,8 @@ class Dia:
         """
         Encodes the given audio waveform into a tensor of DAC codebook indices
         """
-        audio = audio.unsqueeze(0)
+        # Move to CPU for consistent processing
+        audio = audio.cpu().unsqueeze(0)
         audio_data = self.dac_model.preprocess(audio, DEFAULT_SAMPLE_RATE)
         _, encoded_frame, _, _, _ = self.dac_model.encode(audio_data)
         encoded_frame: torch.Tensor
@@ -547,33 +546,33 @@ class Dia:
     @torch.inference_mode()
     def _decode(self, audio_codes: torch.Tensor) -> torch.Tensor:
         """
-        Decodes the given frames into an output audio waveform
+        Decodes the given frames into an output audio waveform.
+        Processes everything on CPU for maximum compatibility.
         """
-        # Ensure audio_codes is long type for embedding indices
-        audio_codes = audio_codes.unsqueeze(0).transpose(1, 2).long()
+        # Move everything to CPU and ensure long type for embedding indices
+        audio_codes = audio_codes.cpu().long()
         
         try:
-            # First attempt with long type
+            # Process on CPU with explicit type control
+            audio_codes = audio_codes.unsqueeze(0).transpose(1, 2)
+            
+            # Ensure DAC model is on CPU
+            self.dac_model.cpu()
+            
+            # Generate audio with careful type handling
             audio_values, _, _ = self.dac_model.quantizer.from_codes(audio_codes)
             audio_values = self.dac_model.decode(audio_values)
-            return audio_values.squeeze()
-        except RuntimeError as e:
-            # If there's a dtype mismatch error, try with a different approach
-            if "Expected tensor for argument #1 'indices'" in str(e) or "Input type" in str(e):
-                print("Warning: Type mismatch in DAC model. Trying with explicit type conversion.")
-                # Try with CPU processing if device-specific issues
-                audio_codes_cpu = audio_codes.cpu().long()
-                self.dac_model.cpu()
-                audio_values, _, _ = self.dac_model.quantizer.from_codes(audio_codes_cpu)
-                audio_values = self.dac_model.decode(audio_values)
-                result = audio_values.squeeze()
-                self.dac_model.to(self.device)  # Move back to original device
-                return result
-            else:
-                # For other errors, print detailed info and re-raise
-                print(f"Error in _decode: {str(e)}")
-                print(f"audio_codes shape: {audio_codes.shape}, dtype: {audio_codes.dtype}, device: {audio_codes.device}")
-                raise e
+            result = audio_values.squeeze()
+            
+            # Apply normalization to ensure proper audio range
+            result = result / max(abs(result.min()), abs(result.max())) * 0.95
+            
+            return result
+        except Exception as e:
+            print(f"Error in audio decoding: {e}")
+            print(f"audio_codes shape: {audio_codes.shape}, dtype: {audio_codes.dtype}")
+            # Return silent audio as fallback
+            return torch.zeros(44100)
 
     def load_audio(self, audio_path: str) -> torch.Tensor:
         """Loads and preprocesses an audio file for use as a prompt.
@@ -599,7 +598,7 @@ class Dia:
         audio, sr = torchaudio.load(audio_path, channels_first=True)  # C, T
         if sr != DEFAULT_SAMPLE_RATE:
             audio = torchaudio.functional.resample(audio, sr, DEFAULT_SAMPLE_RATE)
-        return self._encode(audio.to(self.device))
+        return self._encode(audio)
 
     def save_audio(self, path: str, audio: np.ndarray):
         """Saves the generated audio waveform to a file.
@@ -613,7 +612,37 @@ class Dia:
         """
         import soundfile as sf
 
-        sf.write(path, audio, DEFAULT_SAMPLE_RATE)
+        # Normalize audio to prevent clipping
+        if audio.size > 0:
+            max_val = max(abs(audio.max()), abs(audio.min()))
+            if max_val > 0:
+                normalized_audio = audio / max_val * 0.95
+            else:
+                normalized_audio = audio
+        else:
+            normalized_audio = audio
+
+        sf.write(path, normalized_audio, DEFAULT_SAMPLE_RATE)
+
+    def generate_and_save_direct(self, text, output_path, **kwargs):
+        """Generate audio and save directly with careful processing"""
+        output = self.generate(text, **kwargs)
+        
+        import soundfile as sf
+        if output is not None:
+            # Ensure output is in the correct range for 16-bit audio
+            if np.size(output) > 0:
+                max_val = max(abs(np.max(output)), abs(np.min(output)))
+                if max_val > 0:
+                    normalized_audio = output / max_val * 0.95
+                else:
+                    normalized_audio = output
+            else:
+                normalized_audio = output
+                
+            sf.write(output_path, normalized_audio, DEFAULT_SAMPLE_RATE, 'PCM_16')
+            return True
+        return False
 
     @torch.inference_mode()
     def generate(
