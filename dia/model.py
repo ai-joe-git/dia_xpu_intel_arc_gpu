@@ -249,11 +249,8 @@ class Dia:
             
             # Apply Intel optimizations to DAC model if available
             if HAS_IPEX and self.device.type == "xpu":
-                # Convert all parameters to the same dtype before optimization
-                # This ensures consistent dtype throughout the model
-                for param in dac_model.parameters():
-                    param.data = param.data.to(torch.float32)
-                dac_model = ipex.optimize(dac_model, dtype=torch.float32)
+                # Keep all parameters in their original dtype for compatibility
+                dac_model = ipex.optimize(dac_model)
                 print("Applied Intel Extension for PyTorch optimizations to DAC model")
                 
         except Exception as e:
@@ -552,23 +549,30 @@ class Dia:
         """
         Decodes the given frames into an output audio waveform
         """
-        # Convert to float32 to match DAC model's expected dtype
-        audio_codes = audio_codes.unsqueeze(0).transpose(1, 2).to(torch.float32)
+        # Ensure audio_codes is long type for embedding indices
+        audio_codes = audio_codes.unsqueeze(0).transpose(1, 2).long()
+        
         try:
+            # First attempt with long type
             audio_values, _, _ = self.dac_model.quantizer.from_codes(audio_codes)
             audio_values = self.dac_model.decode(audio_values)
-            audio_values: torch.Tensor
             return audio_values.squeeze()
         except RuntimeError as e:
-            # If there's a dtype mismatch error, try with a different dtype
-            if "Input type" in str(e) and "bias type" in str(e):
-                print("Warning: Dtype mismatch in DAC model. Trying with explicit float32 conversion.")
-                # Force all tensors to float32
-                self.dac_model.to(torch.float32)
-                audio_values, _, _ = self.dac_model.quantizer.from_codes(audio_codes)
+            # If there's a dtype mismatch error, try with a different approach
+            if "Expected tensor for argument #1 'indices'" in str(e) or "Input type" in str(e):
+                print("Warning: Type mismatch in DAC model. Trying with explicit type conversion.")
+                # Try with CPU processing if device-specific issues
+                audio_codes_cpu = audio_codes.cpu().long()
+                self.dac_model.cpu()
+                audio_values, _, _ = self.dac_model.quantizer.from_codes(audio_codes_cpu)
                 audio_values = self.dac_model.decode(audio_values)
-                return audio_values.squeeze()
+                result = audio_values.squeeze()
+                self.dac_model.to(self.device)  # Move back to original device
+                return result
             else:
+                # For other errors, print detailed info and re-raise
+                print(f"Error in _decode: {str(e)}")
+                print(f"audio_codes shape: {audio_codes.shape}, dtype: {audio_codes.dtype}, device: {audio_codes.device}")
                 raise e
 
     def load_audio(self, audio_path: str) -> torch.Tensor:
