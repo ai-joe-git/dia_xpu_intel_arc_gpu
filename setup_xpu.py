@@ -35,20 +35,20 @@ def create_venv_and_install():
         python_executable, "-m", "pip", "install", "numpy<2.0.0"
     ])
 
-    # Install PyTorch 2.5.1 with XPU support (compatible with Intel Extension 2.5.10+xpu)
-    print("Installing PyTorch 2.5.1 with XPU support...")
+    # Install PyTorch 2.7.0 with XPU support (latest available version)
+    print("Installing PyTorch 2.7.0 with XPU support...")
     subprocess.check_call([
         python_executable, "-m", "pip", "install", 
-        "torch==2.5.1+xpu", 
-        "torchaudio==2.5.1+xpu",
+        "torch==2.7.0+xpu", 
+        "torchaudio==2.7.0+xpu",
         "--index-url", "https://download.pytorch.org/whl/xpu"
     ])
 
-    # Install Intel Extension for PyTorch 2.5.10+xpu
+    # Install Intel Extension for PyTorch 2.7.10+xpu (compatible with PyTorch 2.7.0)
     print("Installing Intel Extension for PyTorch...")
     subprocess.check_call([
         python_executable, "-m", "pip", "install",
-        "intel-extension-for-pytorch==2.5.10+xpu",
+        "intel-extension-for-pytorch==2.7.10+xpu",
         "--extra-index-url", "https://pytorch-extension.intel.com/release-whl/stable/xpu/us/"
     ])
 
