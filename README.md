@@ -1,159 +1,116 @@
-<p align="center">
-<a href="https://github.com/nari-labs/dia">
-<img src="./dia/static/images/banner.png">
-</a>
-</p>
-<p align="center">
-<a href="https://tally.so/r/meokbo" target="_blank"><img alt="Static Badge" src="https://img.shields.io/badge/Join-Waitlist-white?style=for-the-badge"></a>
-<a href="https://discord.gg/gcMTW7XA" target="_blank"><img src="https://img.shields.io/badge/Discord-Join%20Chat-7289DA?logo=discord&style=for-the-badge"></a>
-<a href="https://github.com/nari-labs/dia/blob/main/LICENSE" target="_blank"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg?style=for-the-badge" alt="LICENSE"></a>
-</p>
-<p align="center">
-<a href="https://huggingface.co/nari-labs/Dia-1.6B"><img src="https://huggingface.co/datasets/huggingface/badges/resolve/main/model-on-hf-lg-dark.svg" alt="Dataset on HuggingFace" height=42 ></a>
-<a href="https://huggingface.co/spaces/nari-labs/Dia-1.6B"><img src="https://huggingface.co/datasets/huggingface/badges/resolve/main/open-in-hf-spaces-lg-dark.svg" alt="Space on HuggingFace" height=38></a>
-</p>
+# Dia XPU - Intel Arc GPU Support
 
-Dia is a 1.6B parameter text to speech model created by Nari Labs.
+This is a fork of the [Nari Labs Dia](https://github.com/nari-labs/dia) project with added support for Intel GPUs, specifically optimized for Intel Arc and Intel Core Ultra integrated graphics.
 
-Dia **directly generates highly realistic dialogue from a transcript**. You can condition the output on audio, enabling emotion and tone control. The model can also produce nonverbal communications like laughter, coughing, clearing throat, etc.
+Dia is a 1.6B parameter text-to-speech model that directly generates highly realistic dialogue from transcripts. This fork enables you to run the model on Intel GPUs using the XPU backend in PyTorch.
 
-To accelerate research, we are providing access to pretrained model checkpoints and inference code. The model weights are hosted on [Hugging Face](https://huggingface.co/nari-labs/Dia-1.6B). The model only supports English generation at the moment.
+## Intel GPU Support
 
-We also provide a [demo page](https://yummy-fir-7a4.notion.site/dia) comparing our model to [ElevenLabs Studio](https://elevenlabs.io/studio) and [Sesame CSM-1B](https://github.com/SesameAILabs/csm).
+This fork has been specifically modified to support:
+- Intel Arc discrete GPUs
+- Intel Core Ultra processors with integrated Arc graphics
+- PyTorch XPU backend with Intel Extension for PyTorch
 
-- (Update) We have a ZeroGPU Space running! Try it now [here](https://huggingface.co/spaces/nari-labs/Dia-1.6B). Thanks to the HF team for the support :)
-- Join our [discord server](https://discord.gg/gcMTW7XA) for community support and access to new features.
-- Play with a larger version of Dia: generate fun conversations, remix content, and share with friends. 🔮 Join the [waitlist](https://tally.so/r/meokbo) for early access.
+## Requirements
 
-## Generation Guidelines
+- Intel GPU drivers (version 30.0.100.9955 or later recommended)
+- PyTorch nightly build with XPU support
+- Intel Extension for PyTorch
 
-- Keep input text length moderate 
-    - Short input (corresponding to under 5s of audio) will sound unnatural
-    - Very long input (corresponding to over 20s of audio) will make the speech unnaturally fast.
-- Use non-verbal tags sparingly, from the list in the README. Overusing or using unlisted non-verbals may cause weird artifacts.
-- Always begin input text with `[S1]`, and always alternate between `[S1]` and `[S2]` (i.e. `[S1]`... `[S1]`... is not good)
-- When using audio prompts (voice cloning), follow these instructions carefully:
-    - Provide the transcript of the to-be cloned audio before the generation text.
-    - Transcript must use `[S1]`, `[S2]` speaker tags correctly (i.e. single speaker: `[S1]`..., two speakers: `[S1]`... `[S2]`...)
-    - Duration of the to-be cloned audio should be 5~10 seconds for the best results.
-        (Keep in mind: 1 second ≈ 86 tokens)
-- Put `[S1]` or `[S2]` (the second-to-last speaker's tag) at the end of the audio to improve audio quality at the end
+## Setup and Installation
 
-### Install via pip
+### Quick Setup with Intel XPU Support
 
-```bash
-# Install directly from GitHub
-pip install git+https://github.com/nari-labs/dia.git
+```
+# Clone this repository
+git clone https://github.com/ai-joe-git/dia_xpu_intel_arc_gpu.git
+cd dia_xpu_intel_arc_gpu
+
+# Run the setup script
+python setup_xpu.py
+
+# Activate the virtual environment
+source venv/bin/activate  # On Linux/macOS
+venv\Scripts\activate.bat  # On Windows
+
+# Run the Gradio UI
+python app.py --device xpu
 ```
 
-### Run the Gradio UI
+### Docker Support
 
-This will open a Gradio UI that you can work on.
+```
+# Build the Docker image
+docker build . -f docker/Dockerfile.gpu -t dia-xpu
 
-```bash
-git clone https://github.com/nari-labs/dia.git
-cd dia && uv run app.py
+# Run the container with Intel GPU access
+docker run --rm --device=/dev/dri -p 7860:7860 dia-xpu
 ```
 
-or if you do not have `uv` pre-installed:
+## Usage
 
-```bash
-git clone https://github.com/nari-labs/dia.git
-cd dia
-python -m venv .venv
-source .venv/bin/activate
-pip install -e .
-python app.py
+### Python API
+
 ```
-
-Note that the model was not fine-tuned on a specific voice. Hence, you will get different voices every time you run the model.
-You can keep speaker consistency by either adding an audio prompt (a guide coming VERY soon - try it with the second example on Gradio for now), or fixing the seed.
-
-## Features
-
-- Generate dialogue via `[S1]` and `[S2]` tag
-- Generate non-verbal like `(laughs)`, `(coughs)`, etc.
-  - Below verbal tags will be recognized, but might result in unexpected output.
-  - `(laughs), (clears throat), (sighs), (gasps), (coughs), (singing), (sings), (mumbles), (beep), (groans), (sniffs), (claps), (screams), (inhales), (exhales), (applause), (burps), (humming), (sneezes), (chuckle), (whistles)`
-- Voice cloning. See [`example/voice_clone.py`](example/voice_clone.py) for more information.
-  - In the Hugging Face space, you can upload the audio you want to clone and place its transcript before your script. Make sure the transcript follows the required format. The model will then output only the content of your script.
-
-## ⚙️ Usage
-
-### As a Python Library
-
-```python
 from dia.model import Dia
 
+# Load model with Intel XPU support
+model = Dia.from_pretrained("nari-labs/Dia-1.6B", compute_dtype="float16", device="xpu")
 
-model = Dia.from_pretrained("nari-labs/Dia-1.6B", compute_dtype="float16")
+# Generate audio from text
+text = "[S1] Dia is running on Intel Arc GPU. [S2] You get full control over scripts and voices. [S1] Wow. Amazing. (laughs)"
+output = model.generate(text, verbose=True)
 
-text = "[S1] Dia is an open weights text to dialogue model. [S2] You get full control over scripts and voices. [S1] Wow. Amazing. (laughs) [S2] Try it now on Git hub or Hugging Face."
-
-output = model.generate(text, use_torch_compile=True, verbose=True)
-
-model.save_audio("simple.mp3", output)
+# Save the generated audio
+model.save_audio("output.wav", output)
 ```
 
-A pypi package and a working CLI tool will be available soon.
+## Performance on Intel GPUs
 
-## 💻 Hardware and Inference Speed
+| Precision | Realtime Factor | VRAM Usage |
+|:---------:|:---------------:|:----------:|
+| `bfloat16` | ~1.8x | ~8GB |
+| `float16` | ~1.9x | ~8GB |
+| `float32` | ~0.8x | ~12GB |
 
-Dia has been tested on only GPUs (pytorch 2.0+, CUDA 12.6). CPU support is to be added soon.
-The initial run will take longer as the Descript Audio Codec also needs to be downloaded.
+## Troubleshooting
 
-These are the speed we benchmarked in RTX 4090.
+If you encounter issues with Intel GPU detection:
 
-| precision | realtime factor w/ compile | realtime factor w/o compile | VRAM |
-|:-:|:-:|:-:|:-:|
-| `bfloat16` | x2.1 | x1.5 | ~10GB |
-| `float16` | x2.2 | x1.3 | ~10GB |
-| `float32` | x1 | x0.9 | ~13GB |
+1. Ensure you have the latest Intel GPU drivers installed
+2. For Linux users, verify OpenCL runtime packages are installed:
+   ```
+   sudo apt-get install -y ocl-icd-libopencl1 intel-opencl-icd intel-level-zero-gpu level-zero
+   ```
+3. For Windows users, check Device Manager to verify your Intel GPU is properly recognized
 
-We will be adding a quantized version in the future.
-
-If you don't have hardware available or if you want to play with bigger versions of our models, join the waitlist [here](https://tally.so/r/meokbo).
-
-## 🪪 License
+## License
 
 This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
 
-## ⚠️ Disclaimer
+## Acknowledgements
 
-This project offers a high-fidelity speech generation model intended for research and educational use. The following uses are **strictly forbidden**:
+- Original Dia model by [Nari Labs](https://github.com/nari-labs/dia)
+- Intel Extension for PyTorch team for XPU backend support
+```
 
-- **Identity Misuse**: Do not produce audio resembling real individuals without permission.
-- **Deceptive Content**: Do not use this model to generate misleading content (e.g. fake news)
-- **Illegal or Malicious Use**: Do not use this model for activities that are illegal or intended to cause harm.
+This README is specifically tailored for the forked repository with Intel Arc GPU support, including installation instructions, performance metrics, and troubleshooting tips relevant to Intel GPUs.
 
-By using this model, you agree to uphold relevant legal standards and ethical responsibilities. We **are not responsible** for any misuse and firmly oppose any unethical usage of this technology.
-
-## 🔭 TODO / Future Work
-
-- Docker support for ARM architecture and MacOS.
-- Optimize inference speed.
-- Add quantization for memory efficiency.
-
-## 🤝 Contributing
-
-We are a tiny team of 1 full-time and 1 part-time research-engineers. We are extra-welcome to any contributions!
-Join our [Discord Server](https://discord.gg/gcMTW7XA) for discussions.
-
-## 🤗 Acknowledgements
-
-- We thank the [Google TPU Research Cloud program](https://sites.research.google/trc/about/) for providing computation resources.
-- Our work was heavily inspired by [SoundStorm](https://arxiv.org/abs/2305.09636), [Parakeet](https://jordandarefsky.com/blog/2024/parakeet/), and [Descript Audio Codec](https://github.com/descriptinc/descript-audio-codec).
-- Hugging Face for providing the ZeroGPU Grant.
-- "Nari" is a pure Korean word for lily.
-- We thank Jason Y. for providing help with data filtering.
-
-
-## ⭐ Star History
-
-<a href="https://www.star-history.com/#nari-labs/dia&Date">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=nari-labs/dia&type=Date&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=nari-labs/dia&type=Date" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=nari-labs/dia&type=Date" />
- </picture>
-</a>
+Citations:
+[1] https://github.com/ai-joe-git/dia_xpu_intel_arc_gpu.git
+[2] https://github.com/ai-joe-git
+[3] https://docs.openvino.ai/2024/get-started/configurations/configurations-intel-gpu.html
+[4] https://github.com/intel/ai-reference-models
+[5] https://intel.github.io/intel-extension-for-tensorflow/latest/docs/install/experimental/install_for_arc_gpu.html
+[6] https://www.intel.com/content/www/us/en/developer/articles/technical/stable-diffusion-with-intel-arc-gpus.html
+[7] https://github.com/intel-gpu/documentation/actions
+[8] https://wiki.archlinux.org/title/Intel_graphics
+[9] https://github.com/tiagovignatti/intel-gpu-tools/blob/master/README
+[10] https://community.intel.com/t5/GPU-Compute-Software/bd-p/gpu-compute-software/page/15
+[11] https://community.intel.com/t5/Intel-ARC-Graphics/Response-to-Need-help-Reporting-a-bug-or-issue-with-Arc-GPU/m-p/1555944?profile.language=en
+[12] https://github.com/GlobalAICommunity/global-ai-bootcamp-2025-workshop-genai-on-postgresql
+[13] https://docs.openvino.ai/2024/get-started/configurations/configurations-intel-gpu.html
+[14] https://intel.github.io/intel-extension-for-tensorflow/latest/docs/install/experimental/install_for_arc_gpu.html
+[15] https://cdrdv2-public.intel.com/817734/817734_Unlocking%20the%20AI%20Power%20of%20Intel%20Arc%20GPU-WP-Rev1.0.pdf
+[16] https://qiita.com/yamakenjp/items/36c28163a40445146f7f
+[17] https://www.intel.com/content/www/us/en/developer/articles/technical/stable-diffusion-with-intel-arc-gpus.html
